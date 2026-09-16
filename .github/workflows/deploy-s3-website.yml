@@ -1,0 +1,81 @@
+name: Deploy Car Website to S3
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website-src/**"
+      - ".github/workflows/deploy-s3-website.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Create S3 bucket if it does not exist
+        run: |
+          if aws s3api head-bucket --bucket "${{ secrets.S3_BUCKET_NAME }}" 2>/dev/null; then
+            echo "Bucket already exists, skipping creation."
+          else
+            aws s3api create-bucket \
+              --bucket "${{ secrets.S3_BUCKET_NAME }}" \
+              --region "${{ secrets.AWS_REGION }}" \
+              --create-bucket-configuration LocationConstraint="${{ secrets.AWS_REGION }}"
+            echo "Bucket created."
+          fi
+
+      - name: Disable Block Public Access
+        run: |
+          aws s3api put-public-access-block \
+            --bucket "${{ secrets.S3_BUCKET_NAME }}" \
+            --public-access-block-configuration \
+            BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false
+
+      - name: Apply public-read bucket policy
+        run: |
+          cat > bucket-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "PublicReadGetObject",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": "arn:aws:s3:::${{ secrets.S3_BUCKET_NAME }}/*"
+              }
+            ]
+          }
+          EOF
+          aws s3api put-bucket-policy \
+            --bucket "${{ secrets.S3_BUCKET_NAME }}" \
+            --policy file://bucket-policy.json
+
+      - name: Enable static website hosting
+        run: |
+          aws s3api put-bucket-website \
+            --bucket "${{ secrets.S3_BUCKET_NAME }}" \
+            --website-configuration '{
+              "IndexDocument": {"Suffix": "index.html"}
+            }'
+
+      - name: Upload website files
+        run: |
+          aws s3 sync ./website-src "s3://${{ secrets.S3_BUCKET_NAME }}" --delete
+
+      - name: Print website endpoint
+        run: |
+          echo "Website URL: http://${{ secrets.S3_BUCKET_NAME }}.s3-website.${{ secrets.AWS_REGION }}.amazonaws.com"
