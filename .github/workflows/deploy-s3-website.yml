@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
     paths:
-      - "website-src/**"
+      - "*.html"
+      - "css/**"
+      - "images/**"
+      - "js/**"
       - ".github/workflows/deploy-s3-website.yml"
   workflow_dispatch:
 
@@ -74,7 +77,10 @@ jobs:
 
       - name: Upload website files
         run: |
-          aws s3 sync ./website-src "s3://${{ secrets.S3_BUCKET_NAME }}" --delete
+          aws s3 sync . "s3://${{ secrets.S3_BUCKET_NAME }}" --delete \
+            --exclude ".git/*" \
+            --exclude ".github/*" \
+            --exclude "bucket-policy.json"
 
       - name: Print website endpoint
         run: |
